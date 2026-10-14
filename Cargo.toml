@@ -13,4 +13,5 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
 [dev-dependencies]
+fastrand = "2.5.0"
 proptest = "1.11.0"
