@@ -4,16 +4,16 @@
 //! disputed. It never logs or prints: each rejected transaction comes back
 //! as a [`TxError`] and the caller decides what to do with it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::account::AccountError;
-use crate::{Account, Amount, ClientId, Transaction, TxId};
+use crate::{Account, Amount, ClientId, Transaction, TxId, TxIdSet};
 
 #[derive(Debug, Default)]
 pub struct Engine {
     accounts: HashMap<ClientId, Account>,
     /// Every accepted deposit and withdrawal, so a reused id can be refused.
-    used_ids: HashSet<TxId>,
+    used_ids: TxIdSet,
     /// Deposits that a later dispute may refer to.
     deposits: HashMap<TxId, Deposit>,
 }
@@ -87,7 +87,7 @@ impl Engine {
         let account = self.accounts.entry(client).or_default();
         // Tx ids are unique. A reused one is most likely a replayed row, and
         // as a deposit it would also overwrite the original's dispute state.
-        if self.used_ids.contains(&tx) {
+        if self.used_ids.contains(tx) {
             return Err(TxError::DuplicateTx(tx));
         }
         account
@@ -110,7 +110,7 @@ impl Engine {
     fn withdraw(&mut self, client: ClientId, tx: TxId, amount: Amount) -> Result<(), TxError> {
         let account = self.accounts.entry(client).or_default();
         // A replayed withdrawal would debit the client twice.
-        if self.used_ids.contains(&tx) {
+        if self.used_ids.contains(tx) {
             return Err(TxError::DuplicateTx(tx));
         }
         account

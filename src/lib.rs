@@ -4,6 +4,7 @@ pub mod account;
 pub mod amount;
 pub mod engine;
 pub mod transaction;
+pub mod tx_ids;
 
 use std::io;
 
@@ -14,6 +15,7 @@ pub use account::Account;
 pub use amount::Amount;
 pub use engine::{Engine, TxError};
 pub use transaction::{ClientId, Record, Transaction, TxId};
+pub use tx_ids::TxIdSet;
 
 const OUTPUT_HEADER: [&str; 5] = ["client", "available", "held", "total", "locked"];
 
