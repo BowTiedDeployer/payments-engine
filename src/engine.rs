@@ -16,6 +16,8 @@ pub struct Engine {
     used_ids: TxIdSet,
     /// Deposits that a later dispute may refer to.
     deposits: HashMap<TxId, Deposit>,
+    /// If set, only these deposit ids are stored.
+    disputable: Option<TxIdSet>,
 }
 
 #[derive(Debug)]
@@ -66,6 +68,18 @@ enum DisputeStep {
 }
 
 impl Engine {
+    /// An engine that only stores the deposits whose ids are in `disputed`.
+    ///
+    /// Given the ids of every dispute row in the input, the result is the
+    /// same as [`Engine::default`]'s: a stored deposit is only read back once
+    /// a dispute names it.
+    pub fn remembering_only(disputed: TxIdSet) -> Self {
+        Self {
+            disputable: Some(disputed),
+            ..Self::default()
+        }
+    }
+
     pub fn apply(&mut self, transaction: Transaction) -> Result<(), TxError> {
         match transaction {
             Transaction::Deposit { client, tx, amount } => self.deposit(client, tx, amount),
@@ -96,14 +110,16 @@ impl Engine {
         // Recorded only once the account has accepted it: a refused deposit
         // never happened and can't be disputed later.
         self.used_ids.insert(tx);
-        self.deposits.insert(
-            tx,
-            Deposit {
-                amount,
-                client,
-                state: DepositState::Settled,
-            },
-        );
+        if self.disputable.as_ref().is_none_or(|ids| ids.contains(tx)) {
+            self.deposits.insert(
+                tx,
+                Deposit {
+                    amount,
+                    client,
+                    state: DepositState::Settled,
+                },
+            );
+        }
         Ok(())
     }
 
