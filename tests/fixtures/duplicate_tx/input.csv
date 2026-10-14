@@ -1,0 +1,9 @@
+type,client,tx,amount
+deposit,1,1,10
+deposit,1,1,20
+deposit,2,1,30
+withdrawal,1,2,4
+withdrawal,1,2,4
+withdrawal,1,1,1
+deposit,1,2,50
+dispute,1,1,
