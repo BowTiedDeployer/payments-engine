@@ -2,7 +2,7 @@
 
 use std::env;
 use std::fs::File;
-use std::io;
+use std::io::{self, Seek};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -30,7 +30,18 @@ fn main() -> ExitCode {
 
 fn run(path: &Path) -> anyhow::Result<()> {
     // No BufReader: the csv reader already buffers its input.
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    payments_engine::process(file, io::stdout().lock())
-        .with_context(|| format!("failed to process {}", path.display()))
+    let mut file =
+        File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let context = || format!("failed to process {}", path.display());
+
+    // A regular file can be read twice: first to find the disputed tx ids,
+    // so the engine only stores those deposits. A pipe gets a single pass.
+    let engine = if file.metadata().with_context(context)?.is_file() {
+        let disputed = payments_engine::disputed_tx_ids(&file).with_context(context)?;
+        file.rewind().with_context(context)?;
+        payments_engine::Engine::remembering_only(disputed)
+    } else {
+        payments_engine::Engine::default()
+    };
+    payments_engine::process_with(engine, file, io::stdout().lock()).with_context(context)
 }

@@ -3,6 +3,10 @@
 //!
 //! Every directory under `tests/fixtures` holds an `input.csv` and the
 //! `expected.csv` it should produce. Adding a case means adding a directory.
+//!
+//! A file argument takes the two-pass path (only disputed deposits are
+//! remembered). Piped input can only be read once and takes the single-pass
+//! path, so every fixture runs both ways.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,15 +36,43 @@ fn fixture_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Feeds `input` to the binary through a pipe, as `cat input | payments-engine /dev/stdin`.
+#[cfg(unix)]
+fn run_piped(input: &Path) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new(BIN)
+        .arg("/dev/stdin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to start binary");
+    let bytes = fs::read(input).expect("input.csv");
+    child.stdin.take().unwrap().write_all(&bytes).unwrap();
+    child.wait_with_output().expect("binary finished")
+}
+
 #[test]
 fn fixtures_produce_expected_output() {
+    check_fixtures(|input| run([input]));
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_fixtures_produce_expected_output() {
+    check_fixtures(run_piped);
+}
+
+fn check_fixtures(run: impl Fn(&Path) -> Output) {
     let dirs = fixture_dirs();
     assert!(!dirs.is_empty(), "no fixtures found");
 
     let mut failures = Vec::new();
     for dir in &dirs {
         let name = dir.file_name().unwrap().to_string_lossy();
-        let output = run([dir.join("input.csv")]);
+        let output = run(&dir.join("input.csv"));
         let expected = fs::read_to_string(dir.join("expected.csv")).expect("expected.csv");
         let actual = String::from_utf8_lossy(&output.stdout);
 
