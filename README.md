@@ -36,11 +36,11 @@ Where the spec leaves a choice open, I did what a bank would do.
 - **A dispute can take `available` negative.** Deposit, withdraw, then dispute is the fraud case from the brief; refusing the dispute would let the client keep the money.
 - **Dispute, resolve and chargeback rows must name the deposit's client**, otherwise they're ignored, so one client can't freeze another's funds.
 - **Lifecycle per deposit:** `Settled -> Disputed -> Settled` (resolve) or `ChargedBack` (final). A resolved deposit can be disputed again.
-- **A locked account refuses deposits and withdrawals**, but open disputes on it still settle.
+- **A locked account refuses deposits and withdrawals**, but disputes on it still run.
 - **Reused tx ids are rejected, whatever the type.** A repeat is most likely a replayed row, and accepting it could debit a client twice. A refused transaction doesn't take its id.
-- **Rejected transactions leave no trace** and can't be disputed later. A failed deposit or withdrawal still creates the account, with zero balances.
+- **Rejected transactions don't change any balance** and can't be disputed later. A refused deposit or withdrawal still creates the client's account, with zero balances.
 - **Amounts must be positive with at most four decimals.** More precision is rejected, not rounded.
-- **Bad rows are skipped.** Only I/O errors stop processing, so a partly read file never produces output that looks complete.
+- **Bad rows are skipped.** Only I/O errors and a header missing one of the four columns stop processing, so a partly read or misread file never produces output that looks complete.
 
 ## Correctness
 
@@ -59,7 +59,7 @@ cargo test
 
 - `#![forbid(unsafe_code)]`, and no `unwrap` on anything that comes from the input.
 - Typed errors in the library (`thiserror`), `anyhow` only in `main`.
-- Exit codes: 0 on success, 2 for usage errors, 1 if the file can't be read.
+- Exit codes: 0 on success, 2 for usage errors, 1 if the file can't be read or its header is missing a column.
 
 ## Efficiency
 
@@ -71,7 +71,7 @@ Input is streamed one row at a time, so the file is never held in memory. What g
 
 **Two passes for files.** A stored deposit is only read back once a dispute names it. So for a regular file, `main` first collects the ids of dispute rows, then the engine stores only those deposits. Piped input can only be read once and keeps a single pass.
 
-Measured on an Apple M1 Max with 10 million generated rows (330 MB):
+Measured on an Apple M1 Max with 10 million generated rows (343 MB):
 
 | Input | Time | Peak memory |
 |---|---|---|
@@ -84,7 +84,7 @@ cargo build --release && /usr/bin/time -l target/release/payments-engine data/be
 cargo bench --bench process
 ```
 
-The benchmark shows about 85% of the time is CSV parsing, not the ledger.
+The benchmark shows about 85% of the time is CSV handling, not the ledger.
 
 **Limits.** Tx ids are `u32`, so a file can hold up to 2^32 transactions (about 150 GB of CSV). In two-pass mode that's an estimated 6 to 15 GB of memory, but piped input, or a file where nearly every deposit is disputed, would need more memory than most machines have. The next step would be to move deposits behind a small trait and store them in an embedded key-value store such as `redb`, keeping the id set in memory. I haven't built it: it adds a dependency and failure modes no input in the brief needs.
 

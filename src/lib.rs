@@ -17,7 +17,16 @@ pub use engine::{Engine, TxError};
 pub use transaction::{ClientId, Record, Transaction, TxId};
 pub use tx_ids::TxIdSet;
 
+const INPUT_COLUMNS: [&str; 4] = ["type", "client", "tx", "amount"];
 const OUTPUT_HEADER: [&str; 5] = ["client", "available", "held", "total", "locked"];
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProcessError {
+    #[error(transparent)]
+    Csv(#[from] csv::Error),
+    #[error("the header has no `{0}` column")]
+    MissingColumn(&'static str),
+}
 
 /// Reads transactions from `input` one row at a time, applies them, and
 /// writes the final account balances to `output`.
@@ -25,9 +34,10 @@ const OUTPUT_HEADER: [&str; 5] = ["client", "available", "held", "total", "locke
 /// Rows that can't be parsed are logged at `warn` and skipped, so one bad
 /// line from a partner doesn't sink the whole batch. Transactions the engine
 /// refuses (insufficient funds, unknown tx, ...) are normal outcomes and are
-/// logged at `debug`. Only I/O errors stop processing: a partly read file
-/// must not produce output that looks complete.
-pub fn process<R: io::Read, W: io::Write>(input: R, output: W) -> Result<(), csv::Error> {
+/// logged at `debug`. Only I/O errors and a header without the expected
+/// columns stop processing: a partly read or misread file must not produce
+/// output that looks complete.
+pub fn process<R: io::Read, W: io::Write>(input: R, output: W) -> Result<(), ProcessError> {
     process_with(Engine::default(), input, output)
 }
 
@@ -37,9 +47,19 @@ pub fn process_with<R: io::Read, W: io::Write>(
     mut engine: Engine,
     input: R,
     output: W,
-) -> Result<(), csv::Error> {
+) -> Result<(), ProcessError> {
     let mut reader = csv_reader(input);
     let headers = reader.headers()?.clone();
+    // An empty file has no header and simply has no transactions. Any other
+    // file must name every column, or each row would be skipped as invalid.
+    if !headers.is_empty() {
+        if let Some(&missing) = INPUT_COLUMNS
+            .iter()
+            .find(|&&column| !headers.iter().any(|name| name == column))
+        {
+            return Err(ProcessError::MissingColumn(missing));
+        }
+    }
 
     // One record buffer for the whole file: rows are parsed in place rather
     // than allocated one by one.
@@ -48,7 +68,7 @@ pub fn process_with<R: io::Read, W: io::Write>(
         match reader.read_record(&mut record) {
             Ok(true) => {}
             Ok(false) => break,
-            Err(err) if err.is_io_error() => return Err(err),
+            Err(err) if err.is_io_error() => return Err(err.into()),
             Err(err) => {
                 warn!("skipping unreadable row: {err}");
                 continue;
@@ -73,7 +93,7 @@ pub fn process_with<R: io::Read, W: io::Write>(
         }
     }
 
-    write_accounts(&engine, output)
+    Ok(write_accounts(&engine, output)?)
 }
 
 /// Collects the tx id of every dispute in `input`, for
@@ -216,6 +236,24 @@ oops, dispute, 1,
         // Only valid dispute rows count.
         for tx in [1, 4, 5] {
             assert!(!ids.contains(TxId(tx)), "{tx} present");
+        }
+    }
+
+    #[test]
+    fn a_header_without_the_expected_columns_is_an_error() {
+        // A misspelled header, and a file with no header row at all, where
+        // the first transaction is read as the header.
+        for (input, missing) in [
+            ("Type,Client,Tx,Amount\ndeposit,1,1,5\n", "type"),
+            ("deposit,1,1,5\ndeposit,1,2,5\n", "type"),
+            ("type,client,amount\ndeposit,1,5\n", "tx"),
+        ] {
+            let mut output = Vec::new();
+            match process(input.as_bytes(), &mut output) {
+                Err(ProcessError::MissingColumn(column)) => assert_eq!(column, missing),
+                other => panic!("{input:?}: expected a missing `{missing}` column, got {other:?}"),
+            }
+            assert!(output.is_empty(), "{input:?}: nothing may be written");
         }
     }
 
